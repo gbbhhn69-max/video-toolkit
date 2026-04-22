@@ -95,6 +95,11 @@ html{background:var(--bg);color:var(--text);font-family:-apple-system,'PingFang 
 .btn-dl-all:hover{filter:brightness(1.1);transform:translateY(-1px)}
 .btn-reset{background:var(--surface2);border:1px solid var(--border);border-radius:9px;padding:9px 14px;color:var(--muted);font-size:13px;cursor:pointer;transition:all .2s;white-space:nowrap}
 .btn-reset:hover{border-color:var(--muted);color:var(--text)}
+.file-actions{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.file-count{color:var(--muted);font-size:13px}
+.file-count strong{color:var(--text)}
+.btn-swap{background:var(--surface);border:1px solid var(--accent);border-radius:9px;padding:8px 16px;color:var(--accent);font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;white-space:nowrap}
+.btn-swap:hover{background:var(--accent);color:#fff;box-shadow:0 0 16px var(--glow)}
 .notice{background:rgba(251,146,60,.07);border:1px solid rgba(251,146,60,.25);border-radius:var(--r-sm);padding:10px 14px;font-size:12px;color:#fdba74;line-height:1.7}
 .notice strong{color:#fb923c}
 @media(max-width:520px){.scale-grid{grid-template-columns:repeat(2,1fr)}.t-row{grid-template-columns:1fr}.tabs{flex-direction:column}}
@@ -117,6 +122,11 @@ html{background:var(--bg);color:var(--text);font-family:-apple-system,'PingFang 
 
   <div class="workspace" id="workspace">
 
+    <div class="file-actions">
+      <span class="file-count" id="file-count">已加载 <strong>1</strong> 个视频</span>
+      <button class="btn-swap" id="btn-swap">🔄 换视频 / 重新选择</button>
+    </div>
+
     <div class="preview-wrap">
       <video id="preview" controls playsinline muted></video>
       <div class="file-badge" id="file-badge">video.mp4</div>
@@ -126,7 +136,7 @@ html{background:var(--bg);color:var(--text);font-family:-apple-system,'PingFang 
       <div class="chip"><span>时长</span><strong id="i-dur">--</strong></div>
       <div class="chip"><span>分辨率</span><strong id="i-res">--</strong></div>
       <div class="chip"><span>文件大小</span><strong id="i-size">--</strong></div>
-      <div class="chip"><span>格式</span><strong>WebM</strong></div>
+      <div class="chip"><span>输出</span><strong id="i-ext">MP4</strong></div>
     </div>
 
     <div class="batch-queue" id="batch-queue"></div>
@@ -200,7 +210,7 @@ html{background:var(--bg);color:var(--text);font-family:-apple-system,'PingFang 
       </div>
     </div>
 
-    <div class="notice">⚡ <strong>本地处理：</strong>截取 + 缩小通过 Canvas 离屏渲染完成。视频音频随录保留。输出 WebM 格式（Chrome/Edge/微信均可直接播放）。<strong>批量处理</strong>会把所有视频打包成一个 ZIP 文件下载。</div>
+    <div class="notice">⚡ <strong>本地处理：</strong>视频不上传服务器。输出格式：<strong>MP4</strong>（Chrome/Edge 较新版本，Win/Mac/iOS/微信原生支持）；老浏览器回退到 WebM。<strong>批量处理</strong>会把所有视频打包成一个 ZIP 下载。</div>
 
     <button class="btn-go" id="btn-go" disabled>⚡ 开始处理</button>
 
@@ -261,11 +271,24 @@ const resultWrap = $('result-wrap');
 const btnDl     = $('btn-dl');
 const btnDlAll  = $('btn-dl-all');
 const btnReset  = $('btn-reset');
+const btnSwap   = $('btn-swap');
 const batchQueue = $('batch-queue');
+const fileCount = $('file-count');
 
 function esc(s) {
   return String(s ?? '').replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
 }
+
+const SUPPORTS_MP4 = (() => {
+  if (typeof MediaRecorder === 'undefined') return false;
+  return [
+    'video/mp4;codecs=avc1.42E01F,mp4a.40.2',
+    'video/mp4;codecs=avc1.640028,mp4a.40.2',
+    'video/mp4;codecs=h264,aac',
+    'video/mp4',
+  ].some(m => MediaRecorder.isTypeSupported(m));
+})();
+$('i-ext').textContent = SUPPORTS_MP4 ? 'MP4' : 'WebM';
 
 function acceptFiles(list) {
   const files = Array.from(list).filter(f => f.type.startsWith('video/'));
@@ -313,6 +336,7 @@ function loadFile(file) {
 }
 
 function renderBatch() {
+  fileCount.innerHTML = `已加载 <strong>${batchFiles.length}</strong> 个视频`;
   if (batchFiles.length <= 1) {
     batchQueue.classList.remove('on');
     batchQueue.innerHTML = '';
@@ -328,6 +352,12 @@ function renderBatch() {
     </div>`;
   }).join('');
 }
+
+btnSwap.addEventListener('click', () => {
+  if (isProcessing) return;
+  fileInput.value = '';
+  fileInput.click();
+});
 
 async function drawThumbs() {
   const c = $('thumb-canvas');
@@ -478,7 +508,13 @@ async function processOne(file, clipStart, clipEnd) {
   const doClip  = currentTab === 'clip'  || currentTab === 'both';
   const doScale = currentTab === 'scale' || currentTab === 'both';
 
+  // MP4 (H.264/AAC) first — Chrome/Edge 126+ natively record MP4 and it plays
+  // on Windows/微信/iOS without any extra player. WebM only kicks in on older browsers.
   const mimeTypes = [
+    'video/mp4;codecs=avc1.42E01F,mp4a.40.2',
+    'video/mp4;codecs=avc1.640028,mp4a.40.2',
+    'video/mp4;codecs=h264,aac',
+    'video/mp4',
     'video/webm;codecs=vp9,opus',
     'video/webm;codecs=vp9',
     'video/webm;codecs=vp8,opus',
@@ -486,6 +522,7 @@ async function processOne(file, clipStart, clipEnd) {
     'video/webm',
   ];
   const mimeType = mimeTypes.find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm';
+  const ext = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
 
   const vid = document.createElement('video');
   const vidUrl = URL.createObjectURL(file);
@@ -577,14 +614,14 @@ async function processOne(file, clipStart, clipEnd) {
   URL.revokeObjectURL(vidUrl);
   vid.src = '';
 
-  return new Blob(chunks, { type: mimeType });
+  return { blob: new Blob(chunks, { type: mimeType }), ext };
 }
 
-function outputName(origName) {
+function outputName(origName, ext) {
   const base = origName.replace(/\.[^/.]+$/, '');
   const suf = (currentTab === 'clip' || currentTab === 'both' ? '_cut' : '')
             + (currentTab === 'scale' || currentTab === 'both' ? '_scaled' : '');
-  return `${base}${suf}.webm`;
+  return `${base}${suf}.${ext}`;
 }
 
 function releaseOutputs() {
@@ -636,8 +673,8 @@ btnGo.addEventListener('click', async () => {
       progBar.style.width = '0%';
       progPct.textContent = '0%';
 
-      const blob = await processOne(file, selStart, selEnd);
-      outputs.push({ name: outputName(file.name), blob });
+      const { blob, ext } = await processOne(file, selStart, selEnd);
+      outputs.push({ name: outputName(file.name, ext), blob, ext });
     }
 
     progWrap.classList.remove('on');
@@ -650,7 +687,7 @@ btnGo.addEventListener('click', async () => {
       btnDl.download = o.name;
       btnDl.style.display = 'inline-block';
       btnDlAll.style.display = 'none';
-      $('r-meta').textContent = `输出：${fmtSize(o.blob.size)}  |  格式：WEBM`;
+      $('r-meta').textContent = `输出：${fmtSize(o.blob.size)}  |  格式：${o.ext.toUpperCase()}`;
     } else {
       progName.textContent = '打包 ZIP 中…';
       progWrap.classList.add('on');
