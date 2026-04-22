@@ -210,7 +210,7 @@ html{background:var(--bg);color:var(--text);font-family:-apple-system,'PingFang 
       </div>
     </div>
 
-    <div class="notice">⚡ <strong>本地处理：</strong>视频不上传服务器。输出格式：<strong>MP4</strong>（Chrome/Edge 较新版本，Win/Mac/iOS/微信原生支持）；老浏览器回退到 WebM。<strong>批量处理</strong>会把所有视频打包成一个 ZIP 下载。</div>
+    <div class="notice">⚡ <strong>本地处理：</strong>视频不上传服务器。输出格式：<strong>WebM</strong>（Chrome / Edge / Safari 17+ / 微信可直接播放；Windows 电脑建议用 Chrome 打开或装 VLC）。<strong>批量处理</strong>会打包成 ZIP 下载。<strong>建议每段 ≤ 5 分钟</strong>，太长容易吃内存。</div>
 
     <button class="btn-go" id="btn-go" disabled>⚡ 开始处理</button>
 
@@ -279,20 +279,18 @@ function esc(s) {
   return String(s ?? '').replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-const SUPPORTS_MP4 = (() => {
-  if (typeof MediaRecorder === 'undefined') return false;
-  return [
-    'video/mp4;codecs=avc1.42E01F,mp4a.40.2',
-    'video/mp4;codecs=avc1.640028,mp4a.40.2',
-    'video/mp4;codecs=h264,aac',
-    'video/mp4',
-  ].some(m => MediaRecorder.isTypeSupported(m));
-})();
-$('i-ext').textContent = SUPPORTS_MP4 ? 'MP4' : 'WebM';
+$('i-ext').textContent = 'WebM';
 
 function acceptFiles(list) {
-  const files = Array.from(list).filter(f => f.type.startsWith('video/'));
-  if (!files.length) return;
+  const arr = Array.from(list);
+  if (!arr.length) return;
+  const files = arr.filter(f => f.type.startsWith('video/'));
+  const rejected = arr.length - files.length;
+  if (!files.length) {
+    alert(`不支持这个文件类型。只接受视频文件（MP4 / MOV / WebM 等）。\n你选的是：${arr.map(f => f.name).join(', ')}`);
+    return;
+  }
+  if (rejected > 0) alert(`已跳过 ${rejected} 个非视频文件（如图片/截图）。`);
   batchFiles = files;
   videoIndex = 0;
   loadFile(files[0]);
@@ -508,13 +506,9 @@ async function processOne(file, clipStart, clipEnd) {
   const doClip  = currentTab === 'clip'  || currentTab === 'both';
   const doScale = currentTab === 'scale' || currentTab === 'both';
 
-  // MP4 (H.264/AAC) first — Chrome/Edge 126+ natively record MP4 and it plays
-  // on Windows/微信/iOS without any extra player. WebM only kicks in on older browsers.
+  // WebM only — Chrome's MP4 MediaRecorder reports supported but produces empty/1-byte files
+  // in practice on some macOS builds. WebM is reliable across Chrome/Edge/Safari 17+/微信.
   const mimeTypes = [
-    'video/mp4;codecs=avc1.42E01F,mp4a.40.2',
-    'video/mp4;codecs=avc1.640028,mp4a.40.2',
-    'video/mp4;codecs=h264,aac',
-    'video/mp4',
     'video/webm;codecs=vp9,opus',
     'video/webm;codecs=vp9',
     'video/webm;codecs=vp8,opus',
@@ -522,7 +516,7 @@ async function processOne(file, clipStart, clipEnd) {
     'video/webm',
   ];
   const mimeType = mimeTypes.find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm';
-  const ext = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
+  const ext = 'webm';
 
   const vid = document.createElement('video');
   const vidUrl = URL.createObjectURL(file);
@@ -532,16 +526,32 @@ async function processOne(file, clipStart, clipEnd) {
   vid.playsInline = true;
   try {
     await new Promise((resolve, reject) => {
-      vid.addEventListener('loadedmetadata', resolve, { once: true });
-      vid.addEventListener('error', () => reject(errWithStage('LOAD_FAIL', 'load')), { once: true });
+      const timer = setTimeout(
+        () => reject(errWithStage('LOAD_TIMEOUT', 'load', new Error('视频加载超时（15 秒）。可能是编码格式不兼容（HEVC/H.265 或非标 MOV），请先转成标准 MP4 再上传。'))),
+        15_000
+      );
+      vid.addEventListener('loadedmetadata', () => { clearTimeout(timer); resolve(); }, { once: true });
+      vid.addEventListener('error', () => {
+        clearTimeout(timer);
+        reject(errWithStage('LOAD_FAIL', 'load', new Error('视频无法解码。浏览器不支持该编码格式，请先转成标准 MP4（H.264）再上传。')));
+      }, { once: true });
     });
   } catch (e) { URL.revokeObjectURL(vidUrl); throw e; }
+
+  if (!isFinite(vid.duration) || vid.duration <= 0) {
+    URL.revokeObjectURL(vidUrl);
+    throw errWithStage('INVALID_DURATION', 'load', new Error('视频时长无效（0 秒）。文件可能损坏或是图片文件。'));
+  }
 
   const { tw, th } = getTargetDims(vid.videoWidth, vid.videoHeight);
 
   const clipS = doClip ? Math.max(0, Math.min(clipStart, vid.duration)) : 0;
   const clipE = doClip ? Math.max(clipS + 0.05, Math.min(clipEnd, vid.duration)) : vid.duration;
   const clipDurS = clipE - clipS;
+  if (clipDurS < 0.2) {
+    URL.revokeObjectURL(vidUrl);
+    throw errWithStage('CLIP_TOO_SHORT', 'load', new Error(`截取范围太短（${clipDurS.toFixed(2)} 秒）。请把结束时间往后拖一些。`));
+  }
 
   vid.currentTime = clipS;
   try {
@@ -614,7 +624,13 @@ async function processOne(file, clipStart, clipEnd) {
   URL.revokeObjectURL(vidUrl);
   vid.src = '';
 
-  return { blob: new Blob(chunks, { type: mimeType }), ext };
+  const blob = new Blob(chunks, { type: mimeType });
+  // 编码器偶尔会静默失败 —— 产出的文件只有 MP4/WebM 容器头（几 KB）但没有画面。
+  // 如果片段有一定时长但成品 < 8KB，肯定是录制坏了，直接报错让用户重试，不要给他一个坏文件。
+  if (blob.size < 8192 && clipDurS > 0.5) {
+    throw errWithStage('RECORDING_EMPTY', 'encode', new Error('录制失败，产出文件为空。请重试，或换一个视频。浏览器的编码器偶尔抽风，再试一次一般就好。'));
+  }
+  return { blob, ext };
 }
 
 function outputName(origName, ext) {

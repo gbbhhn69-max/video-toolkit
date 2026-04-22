@@ -32,16 +32,23 @@
 | 换视频 | 工作区顶部"🔄 换视频"按钮，无需刷新页面即可重新选文件 |
 | 批量处理 | 多选视频 → 一键处理 → 下载 **单个 ZIP 压缩包** |
 | 本地处理 | 视频不上传服务器，浏览器内完成 |
-| 输出格式 | 优先 **MP4**（Chrome/Edge 126+ 原生支持，Win/Mac/iOS/微信通吃）；老浏览器自动回退 WebM |
+| 输出格式 | **WebM**（Chrome / Edge / Safari 17+ / 微信原生支持） |
 
 ## 推荐浏览器
 
-- **Chrome / Edge 126+**（2024 年 6 月以后版本）→ MP4 输出
-- Safari 16.4+ → 可能回退到 WebM
-- Firefox → 回退到 WebM
+- **Chrome / Edge（任意现代版本）** → 最稳定
+- Safari 17+ → 可用
+- Firefox → 可用
+
+## Windows 用户怎么播 WebM
+
+- 直接在 **Chrome** 或 **Edge** 里拖进去播
+- 或者装 [VLC](https://www.videolan.org/vlc/)（30 秒免费安装，什么格式都能播）
+- 新版 Windows 11 自带的 Movies & TV 也能播
 
 ## 已知限制
 
-- 老浏览器输出 WebM，Windows 自带播放器可能打不开，用 VLC 或新版 Movies & TV 即可
-- 处理时间约等于视频时长（Canvas + MediaRecorder 实时录制）
-- 建议单个视频不超过 5 分钟；超长视频浏览器内存容易吃紧
+- **源视频编码**：HEVC/H.265、部分 MOV、MKV 浏览器无法解码。上传失败请先用剪映/格式工厂转成标准 **MP4（H.264）** 再上传
+- **时长**：建议 ≤ 5 分钟。处理时间约等于视频时长（Canvas 实时录制原理）
+- **不支持 MP4 输出**：Chrome 的 MP4 MediaRecorder 目前不稳定，会产出 0 秒的空文件，所以先统一用 WebM 保证可用
+- **图片/截图**：工具只接视频文件，拖截图会提示"不支持这个文件类型"
